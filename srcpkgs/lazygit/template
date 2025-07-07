@@ -1,6 +1,6 @@
 # Template file for 'lazygit'
 pkgname=lazygit
-version=0.50.0
+version=0.52.0
 revision=1
 build_style=go
 go_import_path=github.com/jesseduffield/lazygit
@@ -13,7 +13,7 @@ license="MIT"
 homepage="https://github.com/jesseduffield/lazygit"
 changelog="https://github.com/jesseduffield/lazygit/releases"
 distfiles="https://github.com/jesseduffield/lazygit/archive/refs/tags/v${version}.tar.gz"
-checksum=4fec66f33609898dbceffc02a38375f5b965b68d0eaf3f5afbe1a44481a5c72b
+checksum=2d6b045105cca36fb4a9ea9fa8834bab70f99a71dcb6f7a1aea11184ac1f66f8
 make_check_pre="env PATH=/usr/libexec/chroot-git:${PATH}"
 
 post_install() {
