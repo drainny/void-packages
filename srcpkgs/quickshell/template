@@ -1,32 +1,20 @@
-# Template file for 'j4-dmenu-desktop'
+# Template file for 'quickshell'
 pkgname=quickshell
-version=0.1.0
+version=0.2.0
 revision=1
-hostmakedepends="git cmake"
-makedepends="ninja pkgconf qt6-base-devel qt6-base-private-devel qt6-declarative-devel jemalloc-devel qt6-declarative-private-devel qt6-svg-devel qt6-wayland-devel qt6-wayland-private-devel libxcb-devel qt6-shadertools qt6-shadertools-devel cli11 pipewire-devel pam-devel"
-depends="qt6-base qt6-declarative jemalloc qt6-svg libpipewire qt6-wayland wayland-protocols libxcb wayland libdrm mesa"
-short_desc="Qt desktop toolkit"
-maintainer="me <me@myself.com>"
-license="GPL-3.0-or-later"
-homepage="https://github.com/quickshell-mirror/quickshell"
-
-do_fetch() {
-    git clone https://github.com/quickshell-mirror/quickshell "$wrksrc"
-}
-
-do_configure() {
-    mkdir build
-    cd build
-    cmake -DCMAKE_INSTALL_PREFIX=/usr -DCRASH_REPORTER=OFF ..
-}
-
-do_build() {
-    cd build
-    make
-}
-
-do_install() {
-    cd build
-    # DESTDIR was added
-    make DESTDIR="$DESTDIR" install
-}
+build_style=cmake
+configure_args="-DDISTRIBUTOR=Void -DDISTRIBUTOR_DEBUGINFO_AVAILABLE=YES
+ -DINSTALL_QML_PREFIX=lib/qt6/qml -DCRASH_REPORTER=OFF -DHYPRLAND=OFF"
+hostmakedepends="pkg-config wayland-devel qt6-base qt6-declarative-devel
+ qt6-wayland-devel qt6-shadertools"
+makedepends="cli11 qt6-base-private-devel qt6-declarative-private-devel
+ qt6-shadertools-devel qt6-wayland-private-devel pipewire-devel jemalloc-devel
+ pam-devel"
+depends="qt6-svg"
+short_desc="Flexible QtQuick-based desktop shell toolkit"
+maintainer="classabbyamp <void@placeviolette.net>"
+license="LGPL-3.0-only"
+homepage="https://quickshell.org"
+changelog="https://quickshell.org/changelog/"
+distfiles="https://git.outfoxxed.me/quickshell/quickshell/archive/v${version}.tar.gz"
+checksum=568291b2397e4859ebc8b1d5cdc60fead2ce2da2368342e5f35c19bb1e32834d
