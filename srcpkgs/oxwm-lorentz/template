@@ -1,7 +1,7 @@
 # Template file for 'oxwm-lorentz'
 pkgname=oxwm-lorentz
 version=0.12.0
-revision=2
+revision=5
 _commit=d0bb35b8cde97782c925c102521ebaeec389db95
 _lua_version=5.4.8
 archs="x86_64* aarch64*"
@@ -20,9 +20,7 @@ conflicts="oxwm>=0"
 nocross="Native Zig builds only; cross compilation has not been validated"
 
 post_extract() {
-	mkdir -p vendor/lua
-	tar -xf "${XBPS_SRCDISTDIR}/${pkgname}-${version}/lua-${_lua_version}.tar.gz" \
-		--strip-components=1 -C vendor/lua
+	vsrcextract -C vendor/lua "lua-${_lua_version}.tar.gz"
 }
 
 do_configure() {
@@ -59,20 +57,4 @@ do_install() {
 	vinstall templates/oxwm.lua 644 usr/share/oxwm
 	vlicense LICENSE
 	vlicense vendor/lua/doc/readme.html LUA.html
-}
-
-oxwm-lorentz-session_package() {
-	short_desc="Supporting applications for Lorentz's oxwm session"
-	metapackage=yes
-	depends="oxwm-lorentz>=${version}_${revision}
-		bash coreutils findutils gawk grep procps-ng
-		xorg-server xinit xauth xorg-fonts xrandr xrdb xset xinput xf86-input-synaptics
-		dbus dbus-x11 elogind
-		alacritty fzf slock picom dunst unclutter libnotify
-		gnupg xclip wl-clipboard zathura zathura-pdf-mupdf emacs
-		pipewire wireplumber mpd
-		fcitx5 fcitx5-gtk+3 fcitx5-qt fcitx5-qt6 fcitx5-chinese-addons fcitx5-anthy
-		libinput-gestures xdotool brightnessctl
-		xdg-desktop-portal xdg-desktop-portal-gtk gnome-keyring
-		redshift xwallpaper"
 }
