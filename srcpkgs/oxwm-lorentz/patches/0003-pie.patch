@@ -1,0 +1,18 @@
+--- a/build.zig
++++ b/build.zig
+@@ -26,6 +26,7 @@
+     });
+ 
+     exe.use_lld = false;
++    exe.pie = true;
+ 
+     const lua = buildLua(b, lua_dep, target, optimize);
+ 
+@@ -174,6 +175,7 @@
+             .target = target,
+             .optimize = optimize,
+             .link_libc = true,
++            .pic = true,
+         }),
+     });
+     lua.root_module.addIncludePath(lua_src.path("src/"));
