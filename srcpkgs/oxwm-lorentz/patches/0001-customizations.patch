@@ -1,0 +1,703 @@
+--- a/src/client.zig
++++ b/src/client.zig
+@@ -158,6 +158,45 @@
+     at.?.next = client;
+ }
+ 
++/// Insert after the focused client when it belongs to the destination tags.
++pub fn attachAfterSelected(client: *Client) void {
++    const monitor = client.monitor orelse return;
++    if (monitor.sel) |selected| {
++        if (selected.monitor == monitor and isVisibleOnTag(selected, client.tags)) {
++            client.next = selected.next;
++            selected.next = client;
++            return;
++        }
++    }
++    attachAside(client);
++}
++
++test "new client follows selection including floating selection and tail" {
++    var monitor = Monitor{};
++    var first = Client{ .monitor = &monitor, .tags = 1 };
++    var second = Client{ .monitor = &monitor, .tags = 1 };
++    var added = Client{ .monitor = &monitor, .tags = 1 };
++    first.next = &second;
++    monitor.clients = &first;
++    monitor.sel = &second;
++    attachAfterSelected(&added);
++    try std.testing.expect(first.next == &second);
++    try std.testing.expect(second.next == &added);
++    try std.testing.expect(added.next == null);
++    var popup = Client{ .monitor = &monitor, .tags = 1, .is_floating = true };
++    monitor.sel = &first;
++    attachAfterSelected(&popup);
++    monitor.sel = &popup;
++    var another = Client{ .monitor = &monitor, .tags = 1 };
++    attachAfterSelected(&another);
++    try std.testing.expect(popup.next == &another);
++    try std.testing.expect(another.next == &second);
++    var hidden = Client{ .monitor = &monitor, .tags = 2 };
++    attachAfterSelected(&hidden);
++    try std.testing.expect(monitor.clients == &hidden);
++    try std.testing.expect(hidden.next == &first);
++}
++
+ /// Counts non-floating, visible clients on `monitor`.
+ pub fn countTiled(monitor: *Monitor) u32 {
+     var count: u32 = 0;
+@@ -250,3 +289,89 @@
+         if (prev_b) |prev| prev.next = client_a else monitor.clients = client_a;
+     }
+ }
++
++/// Adjacent window on the viewed tags, stopping at either end of the list.
++/// Floating windows retain their place in the focus order.
++pub fn adjacentVisible(monitor: *Monitor, direction: i32) ?*Client {
++    const selected = monitor.sel orelse return null;
++    if (direction == 0) return null;
++    if (direction > 0) {
++        var current = selected.next;
++        while (current) |client| : (current = client.next) {
++            if (isVisible(client)) return client;
++        }
++        return null;
++    }
++    var previous: ?*Client = null;
++    var current = monitor.clients;
++    while (current) |client| : (current = client.next) {
++        if (client == selected) return previous;
++        if (isVisible(client)) previous = client;
++    }
++    return null;
++}
++
++/// Adjacent tiled client on the viewed tags, without wrapping at the ends.
++pub fn adjacentTiled(monitor: *Monitor, direction: i32) ?*Client {
++    const selected = monitor.sel orelse return null;
++    if (direction == 0 or selected.is_floating) return null;
++    if (direction > 0) {
++        var current = selected.next;
++        while (current) |client| : (current = client.next) {
++            if (isVisible(client) and !client.is_floating) return client;
++        }
++        return null;
++    }
++    var previous: ?*Client = null;
++    var current = monitor.clients;
++    while (current) |client| : (current = client.next) {
++        if (client == selected) return previous;
++        if (isVisible(client) and !client.is_floating) previous = client;
++    }
++    return null;
++}
++
++test "tiled movement stops at boundaries and skips hidden and floating clients" {
++    var monitor = Monitor{};
++    var first = Client{ .monitor = &monitor, .tags = 1 };
++    var hidden = Client{ .monitor = &monitor, .tags = 2 };
++    var floating = Client{ .monitor = &monitor, .tags = 1, .is_floating = true };
++    var last = Client{ .monitor = &monitor, .tags = 1 };
++    first.next = &hidden;
++    hidden.next = &floating;
++    floating.next = &last;
++    monitor.clients = &first;
++    monitor.sel = &first;
++    try std.testing.expect(adjacentTiled(&monitor, -1) == null);
++    try std.testing.expect(adjacentTiled(&monitor, 1) == &last);
++    monitor.sel = &last;
++    try std.testing.expect(adjacentTiled(&monitor, 1) == null);
++    try std.testing.expect(adjacentTiled(&monitor, -1) == &first);
++    monitor.sel = &floating;
++    try std.testing.expect(adjacentTiled(&monitor, 1) == null);
++    monitor.sel = null;
++    try std.testing.expect(adjacentTiled(&monitor, -1) == null);
++}
++
++test "adjacent focus stops at boundaries and skips hidden tags" {
++    var monitor = Monitor{};
++    var first = Client{ .monitor = &monitor, .tags = 1 };
++    var hidden = Client{ .monitor = &monitor, .tags = 2 };
++    var last = Client{ .monitor = &monitor, .tags = 1, .is_floating = true };
++    first.next = &hidden;
++    hidden.next = &last;
++    monitor.clients = &first;
++    monitor.sel = &first;
++    try std.testing.expect(adjacentVisible(&monitor, -1) == null);
++    try std.testing.expect(adjacentVisible(&monitor, 1) == &last);
++    monitor.sel = &last;
++    try std.testing.expect(adjacentVisible(&monitor, 1) == null);
++    try std.testing.expect(adjacentVisible(&monitor, -1) == &first);
++    first.next = null;
++    monitor.sel = &first;
++    try std.testing.expect(adjacentVisible(&monitor, -1) == null);
++    try std.testing.expect(adjacentVisible(&monitor, 1) == null);
++    try std.testing.expect(adjacentVisible(&monitor, 0) == null);
++    monitor.sel = null;
++    try std.testing.expect(adjacentVisible(&monitor, 1) == null);
++}
+--- a/src/config/config.zig
++++ b/src/config/config.zig
+@@ -35,6 +35,7 @@
+     send_to_monitor,
+     scroll_left,
+     scroll_right,
++    toggle_scroll_width,
+ };
+ 
+ pub const KeyPress = struct {
+@@ -193,6 +194,7 @@
+     border_focused: u32 = 0x6dade3,
+     border_unfocused: u32 = 0x444444,
+ 
++    animations_enabled: bool = true,
+     gaps_enabled: bool = true,
+     smartgaps_enabled: bool = false,
+     gap_inner_h: i32 = 5,
+--- a/src/config/lua.zig
++++ b/src/config/lua.zig
+@@ -193,6 +193,9 @@
+     c.lua_pushcfunction(state, luaLayoutScrollRight);
+     c.lua_setfield(state, -2, "scroll_right");
+ 
++    c.lua_pushcfunction(state, luaLayoutToggleWidth);
++    c.lua_setfield(state, -2, "toggle_width");
++
+     c.lua_setfield(state, -2, "layout");
+ }
+ 
+@@ -314,6 +317,9 @@
+ 
+     c.lua_pushcfunction(state, luaSetLayout);
+     c.lua_setfield(state, -2, "set_layout");
++
++    c.lua_pushcfunction(state, luaSetAnimations);
++    c.lua_setfield(state, -2, "set_animations");
+ 
+     c.lua_pushcfunction(state, luaSetModkey);
+     c.lua_setfield(state, -2, "set_modkey");
+@@ -621,6 +627,12 @@
+ fn luaLayoutSet(state: ?*c.lua_State) callconv(.c) c_int {
+     const s = state orelse return 0;
+     createActionTableWithString(s, "ChangeLayout");
++    return 1;
++}
++
++fn luaLayoutToggleWidth(state: ?*c.lua_State) callconv(.c) c_int {
++    const s = state orelse return 0;
++    createActionTable(s, "ToggleScrollWidth");
+     return 1;
+ }
+ 
+@@ -1078,6 +1090,12 @@
+     if (dupeLuaString(s, 1)) |term| {
+         cfg.terminal = term;
+     }
++    return 0;
++}
++
++fn luaSetAnimations(state: ?*c.lua_State) callconv(.c) c_int {
++    const cfg = config orelse return 0;
++    cfg.animations_enabled = c.lua_toboolean(state, 1) != 0;
+     return 0;
+ }
+ 
+@@ -1407,6 +1425,7 @@
+         .{ "TagMonitor", Action.send_to_monitor },
+         .{ "ScrollLeft", Action.scroll_left },
+         .{ "ScrollRight", Action.scroll_right },
++        .{ "ToggleScrollWidth", Action.toggle_scroll_width },
+     };
+ 
+     inline for (action_map) |entry| {
+--- a/src/wm/actions.zig
++++ b/src/wm/actions.zig
+@@ -15,6 +15,18 @@
+ const WindowManager = wm_mod.WindowManager;
+ 
+ const snap_distance: i32 = 32;
++const drag_start_distance: i32 = 12;
++
++fn movedEnoughToDrag(delta_x: i32, delta_y: i32) bool {
++    return @abs(delta_x) >= drag_start_distance or @abs(delta_y) >= drag_start_distance;
++}
++
++test "touchpad tap and small pointer jitter do not start a window drag" {
++    try std.testing.expect(!movedEnoughToDrag(0, 0));
++    try std.testing.expect(!movedEnoughToDrag(11, -11));
++    try std.testing.expect(movedEnoughToDrag(12, 0));
++    try std.testing.expect(movedEnoughToDrag(0, -12));
++}
+ 
+ // execvpeZ removed in zig 0.16 std lib rework (codeberg.org/ziglang/zig/issues/31694) with no replacement
+ extern "c" fn execvp(file: [*:0]const u8, argv: [*:null]const ?[*:0]const u8) c_int;
+@@ -80,51 +92,7 @@
+         return;
+     }
+ 
+-    var target: ?*Client = null;
+-
+-    if (direction > 0) {
+-        target = current.next;
+-        while (target) |client| {
+-            if (client_mod.isVisible(client) and !client.is_floating) {
+-                break;
+-            }
+-            target = client.next;
+-        }
+-        if (target == null) {
+-            target = monitor.clients;
+-            while (target) |client| {
+-                if (client == current) {
+-                    break;
+-                }
+-                if (client_mod.isVisible(client) and !client.is_floating) {
+-                    break;
+-                }
+-                target = client.next;
+-            }
+-        }
+-    } else {
+-        var prev: ?*Client = null;
+-        var iter = monitor.clients;
+-        while (iter) |client| {
+-            if (client == current) {
+-                break;
+-            }
+-            if (client_mod.isVisible(client) and !client.is_floating) {
+-                prev = client;
+-            }
+-            iter = client.next;
+-        }
+-        if (prev == null) {
+-            iter = current.next;
+-            while (iter) |client| {
+-                if (client_mod.isVisible(client) and !client.is_floating) {
+-                    prev = client;
+-                }
+-                iter = client.next;
+-            }
+-        }
+-        target = prev;
+-    }
++    const target = client_mod.adjacentTiled(monitor, direction);
+ 
+     if (target) |swap_client| {
+         if (swap_client != current) {
+@@ -295,52 +263,8 @@
+ }
+ 
+ pub fn focusstack(direction: i32, wm: *WindowManager) void {
+-    if (direction == 0) return;
+-    const monitor = wm.selected_monitor orelse return;
+-    const current = monitor.sel orelse return;
+-
+-    var next_client: ?*Client = null;
+-
+-    if (direction > 0) {
+-        next_client = current.next;
+-        while (next_client) |client| {
+-            if (client_mod.isVisible(client)) {
+-                break;
+-            }
+-            next_client = client.next;
+-        }
+-        if (next_client == null) {
+-            next_client = monitor.clients;
+-            while (next_client) |client| {
+-                if (client_mod.isVisible(client)) {
+-                    break;
+-                }
+-                next_client = client.next;
+-            }
+-        }
+-    } else {
+-        var prev: ?*Client = null;
+-        var iter = monitor.clients;
+-        while (iter) |client| {
+-            if (client == current) {
+-                break;
+-            }
+-            if (client_mod.isVisible(client)) {
+-                prev = client;
+-            }
+-            iter = client.next;
+-        }
+-        if (prev == null) {
+-            iter = current.next;
+-            while (iter) |client| {
+-                if (client_mod.isVisible(client)) {
+-                    prev = client;
+-                }
+-                iter = client.next;
+-            }
+-        }
+-        next_client = prev;
+-    }
++    const monitor = wm.selected_monitor orelse return;
++    const next_client = client_mod.adjacentVisible(monitor, direction);
+ 
+     if (next_client) |client| {
+         core.focus(client, wm);
+@@ -519,9 +443,6 @@
+     core.restack(monitor, wm);
+ 
+     const was_floating = client.is_floating;
+-    if (!client.is_floating) {
+-        client.is_floating = true;
+-    }
+ 
+     var root_x: c_int = undefined;
+     var root_y: c_int = undefined;
+@@ -555,6 +476,7 @@
+ 
+     var event: xlib.XEvent = undefined;
+     var done = false;
++    var dragged = false;
+ 
+     while (!done) {
+         _ = xlib.XNextEvent(wm.display.handle, &event);
+@@ -568,6 +490,11 @@
+                 last_time = motion.time;
+                 const delta_x = motion.x_root - pointer_start_x;
+                 const delta_y = motion.y_root - pointer_start_y;
++                if (!dragged) {
++                    if (!movedEnoughToDrag(delta_x, delta_y)) continue;
++                    dragged = true;
++                    client.is_floating = true;
++                }
+                 var new_x = start_x + delta_x;
+                 var new_y = start_y + delta_y;
+                 if (client.monitor) |client_monitor| {
+@@ -584,6 +511,9 @@
+     }
+ 
+     _ = xlib.XUngrabPointer(wm.display.handle, xlib.CurrentTime);
++
++    // A modifier-assisted touchpad tap is not a drag; leave tiling intact.
++    if (!dragged) return;
+ 
+     const new_mon = monitor_mod.rectToMonitor(wm, client.x, client.y, client.width, client.height);
+     if (new_mon != null and new_mon != monitor) {
+@@ -854,6 +784,14 @@
+         },
+         .focus_monitor => focusmon(int_arg, wm),
+         .send_to_monitor => sendmon(int_arg, wm),
++        .toggle_scroll_width => {
++            const monitor = wm.selected_monitor orelse return;
++            if (!core.isScrollingLayout(monitor)) return;
++            monitor.nmaster = if (monitor.nmaster == 1) 2 else 1;
++            monitor.pertag.nmasters[monitor.pertag.curtag] = monitor.nmaster;
++            core.arrange(monitor, wm);
++            if (monitor.sel) |client| core.scrollToWindow(client, true, wm);
++        },
+         .scroll_left => core.scrollLayout(-1, wm),
+         .scroll_right => core.scrollLayout(1, wm),
+     }
+--- a/src/wm/core.zig
++++ b/src/wm/core.zig
+@@ -90,7 +90,7 @@
+         _ = xlib.XRaiseWindow(wm.display.handle, client.window);
+     }
+ 
+-    client_mod.attachAside(client);
++    client_mod.attachAfterSelected(client);
+     client_mod.attachStack(client);
+ 
+     _ = xlib.XChangeProperty(wm.display.handle, wm.display.root, wm.atoms.net_client_list, xlib.XA_WINDOW, 32, xlib.PropModeAppend, @ptrCast(&client.window), 1);
+@@ -104,7 +104,10 @@
+     monitor.sel = client;
+ 
+     if (isScrollingLayout(monitor)) {
+-        monitor.scroll_offset = 0;
++        // Place the new window in the final viewport before mapping it. Resetting
++        // to zero first visibly redraws the first columns before focus scrolls back.
++        wm.scroll_animation.active = false;
++        monitor.scroll_offset = scrolling.getTargetScrollForWindow(monitor, client);
+     }
+ 
+     arrange(monitor, wm);
+@@ -118,17 +121,10 @@
+     var next_focus: ?*Client = null;
+     if (client_monitor) |monitor| {
+         if (monitor.sel == client and isScrollingLayout(monitor)) {
+-            next_focus = client.next;
+-            if (next_focus == null) {
+-                var prev: ?*Client = null;
+-                var iter = monitor.clients;
+-                while (iter) |c| {
+-                    if (c == client) break;
+-                    prev = c;
+-                    iter = c.next;
+-                }
+-                next_focus = prev;
+-            }
++            next_focus = if (client.is_floating)
++                scrolling.leftmostViewportClient(monitor)
++            else
++                client_mod.adjacentVisible(monitor, 1) orelse client_mod.adjacentVisible(monitor, -1);
+         }
+     }
+ 
+@@ -137,23 +133,27 @@
+ 
+     if (client_monitor) |monitor| {
+         if (monitor.sel == client) {
+-            monitor.sel = if (next_focus) |nf| nf else monitor.stack;
++            monitor.sel = next_focus;
++            if (monitor.sel == null) {
++                var candidate = monitor.stack;
++                while (candidate) |c| : (candidate = c.stack_next) {
++                    if (client_mod.isVisible(c)) {
++                        monitor.sel = c;
++                        break;
++                    }
++                }
++            }
+         }
+         if (isScrollingLayout(monitor)) {
+             const target = if (monitor.sel) |sel| scrolling.getTargetScrollForWindow(monitor, sel) else 0;
+-            if (target == 0) {
+-                monitor.scroll_offset = scrolling.getScrollStep(monitor);
+-            } else {
+-                monitor.scroll_offset = 0;
+-            }
++            wm.scroll_animation.active = false;
++            monitor.scroll_offset = target;
+         }
+         arrange(monitor, wm);
+     }
+ 
+     if (client_monitor) |monitor| {
+-        if (monitor.sel) |selected| {
+-            focus(selected, wm);
+-        }
++        if (monitor == wm.selected_monitor) focus(monitor.sel, wm);
+     }
+ 
+     client_mod.destroy(wm.allocator, client);
+@@ -402,6 +402,12 @@
+     if (!wm.scroll_animation.isActive()) return;
+ 
+     const monitor = wm.selected_monitor orelse return;
++    if (!wm.config.animations_enabled) {
++        monitor.scroll_offset = wm.scroll_animation.target();
++        wm.scroll_animation.active = false;
++        arrange(monitor, wm);
++        return;
++    }
+     if (wm.scroll_animation.update(wm.io)) |new_offset| {
+         monitor.scroll_offset = new_offset;
+         arrange(monitor, wm);
+@@ -430,7 +436,13 @@
+     var target = current + direction * scroll_step;
+     target = @max(0, @min(target, max_scroll));
+ 
+-    wm.scroll_animation.start(wm.io, monitor.scroll_offset, target, wm.animation_config);
++    if (wm.config.animations_enabled) {
++        wm.scroll_animation.start(wm.io, monitor.scroll_offset, target, wm.animation_config);
++    } else {
++        wm.scroll_animation.active = false;
++        monitor.scroll_offset = target;
++        arrange(monitor, wm);
++    }
+ }
+ 
+ pub fn scrollToWindow(client: *Client, animate: bool, wm: *WindowManager) void {
+@@ -438,10 +450,13 @@
+     if (!isScrollingLayout(monitor)) return;
+ 
+     const target = scrolling.getTargetScrollForWindow(monitor, client);
+-
+-    if (animate) {
++    // Already visible: avoid another show/hide, resize and restack pass.
++    if (target == monitor.scroll_offset and !wm.scroll_animation.isActive()) return;
++
++    if (animate and wm.config.animations_enabled) {
+         wm.scroll_animation.start(wm.io, monitor.scroll_offset, target, wm.animation_config);
+     } else {
++        wm.scroll_animation.active = false;
+         monitor.scroll_offset = target;
+         arrange(monitor, wm);
+     }
+--- a/src/layouts/scrolling.zig
++++ b/src/layouts/scrolling.zig
+@@ -108,13 +108,106 @@
+     return null;
+ }
+ 
++/// The leftmost tiled column in the current viewport, ignoring floating clients.
++pub fn leftmostViewportClient(monitor: *Monitor) ?*Client {
++    const step = getScrollStep(monitor);
++    const offset = std.math.clamp(monitor.scroll_offset, 0, getMaxScroll(monitor));
++    const target_index = if (step > 0) @divTrunc(offset, step) else 0;
++    var index: i32 = 0;
++    var current = client_mod.nextTiled(monitor.clients);
++    while (current) |client| : (current = client_mod.nextTiled(client.next)) {
++        if (index == target_index) return client;
++        index += 1;
++    }
++    return null;
++}
++
++test "floating dismissal chooses viewport left column in full and half width" {
++    var monitor = Monitor{ .win_w = 1920, .nmaster = 2 };
++    var clients: [5]Client = undefined;
++    for (&clients, 0..) |*client, index| {
++        client.* = .{ .tags = 1, .monitor = &monitor };
++        if (index + 1 < clients.len) client.next = &clients[index + 1];
++    }
++    monitor.clients = &clients[0];
++    clients[1].is_floating = true;
++    clients[2].tags = 2;
++    monitor.scroll_offset = getScrollStep(&monitor);
++    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[3]);
++    monitor.nmaster = 1;
++    monitor.scroll_offset = 2 * getScrollStep(&monitor);
++    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[4]);
++    monitor.scroll_offset = 0;
++    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[0]);
++    clients[0].is_floating = true;
++    clients[3].is_floating = true;
++    clients[4].is_floating = true;
++    try std.testing.expect(leftmostViewportClient(&monitor) == null);
++}
++
+ pub fn getTargetScrollForWindow(monitor: *Monitor, target: *Client) i32 {
+-    const index = getWindowIndex(monitor, target) orelse return 0;
+-    if (index == 0) return 0;
+-
+-    const scroll_step = getScrollStep(monitor);
+     const max_scroll = getMaxScroll(monitor);
+-
+-    const target_scroll = scroll_step * @as(i32, @intCast(index));
+-    return @min(target_scroll, max_scroll);
+-}
++    const current = std.math.clamp(monitor.scroll_offset, 0, max_scroll);
++    // Floating windows do not have a column and must not move the viewport.
++    const index = getWindowIndex(monitor, target) orelse return current;
++    const step = getScrollStep(monitor);
++    const visible_count: i32 = @max(1, monitor.nmaster);
++    const column: i32 = @intCast(index);
++    // Keep the current viewport whenever the entire focused column fits.
++    // Otherwise move only far enough to reveal its nearest edge.
++    const minimum = @max(0, (column - visible_count + 1) * step);
++    const maximum = @min(max_scroll, column * step);
++    return std.math.clamp(current, minimum, maximum);
++}
++
++test "focus preserves visible columns and minimally reveals hidden columns" {
++    var monitor = Monitor{ .win_w = 1921, .nmaster = 2, .gap_outer_v = 5, .gap_inner_v = 5 };
++    var clients: [4]Client = undefined;
++    for (&clients, 0..) |*client, index| {
++        client.* = .{ .tags = 1, .monitor = &monitor };
++        if (index + 1 < clients.len) client.next = &clients[index + 1];
++    }
++    monitor.clients = &clients[0];
++    const step = getScrollStep(&monitor);
++    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[1]));
++    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[0]));
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
++    monitor.scroll_offset = step;
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[1]));
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
++    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[0]));
++    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &clients[3]));
++    var floating = Client{ .is_floating = true, .tags = 1, .monitor = &monitor };
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &floating));
++    // A partially visible column is revealed by the smallest adjustment.
++    monitor.scroll_offset = @divTrunc(step, 2);
++    try std.testing.expectEqual(monitor.scroll_offset, getTargetScrollForWindow(&monitor, &clients[1]));
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
++    // Closing windows clamps a stale offset to the remaining content.
++    clients[1].next = null;
++    monitor.scroll_offset = 2 * step;
++    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[1]));
++    // Full-width mode must still reveal the focused window.
++    monitor.nmaster = 1;
++    monitor.scroll_offset = 0;
++    try std.testing.expectEqual(getScrollStep(&monitor), getTargetScrollForWindow(&monitor, &clients[1]));
++}
++
++test "opening a column preserves a scrolled viewport or reveals only the new edge" {
++    var monitor = Monitor{ .win_w = 1920, .nmaster = 2, .gap_outer_v = 5, .gap_inner_v = 5 };
++    var clients: [5]Client = undefined;
++    for (&clients, 0..) |*client, index| {
++        client.* = .{ .tags = 1, .monitor = &monitor };
++        if (index + 1 < clients.len) client.next = &clients[index + 1];
++    }
++    monitor.clients = &clients[0];
++    const step = getScrollStep(&monitor);
++    monitor.scroll_offset = 2 * step;
++    // The third/fourth columns are already visible: never jump to column one.
++    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &clients[3]));
++    // A newly appended fifth column requires exactly one step to the right.
++    try std.testing.expectEqual(3 * step, getTargetScrollForWindow(&monitor, &clients[4]));
++    // Opening a floating terminal must not reposition existing tiled windows.
++    var floating = Client{ .tags = 1, .monitor = &monitor, .is_floating = true };
++    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &floating));
++}
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -189,4 +189,6 @@
+ 
+ test {
+     _ = @import("x11/events.zig");
++    _ = @import("layouts/scrolling.zig");
++    _ = @import("client.zig");
+ }
+--- a/templates/oxwm.lua
++++ b/templates/oxwm.lua
+@@ -368,3 +368,11 @@
+ ---Add an autostart command
+ ---@param cmd string Command to run at startup
+ function oxwm.autostart(cmd) end
++
++---Toggle scrolling between one full-width and two half-width columns.
++---@return table Action
++function oxwm.layout.toggle_width() end
++
++---Enable or disable scrolling animations.
++---@param enabled boolean
++function oxwm.set_animations(enabled) end
+--- a/tests/lua_config_tests.zig
++++ b/tests/lua_config_tests.zig
+@@ -16,3 +16,26 @@
+     const loaded = lua.loadFile("resources/test-config.lua");
+     try testing.expect(loaded);
+ }
++
++
++test "scroll width toggle is registered as an action" {
++    var cfg = Config.init(testing.allocator);
++    defer cfg.deinit();
++    try testing.expect(lua.init(&cfg));
++    defer lua.deinit();
++    try testing.expect(lua.loadFile("resources/test-toggle-width.lua"));
++    try testing.expectEqual(@as(usize, 1), cfg.keybinds.items.len);
++    try testing.expectEqual(lua.config_mod.Action.toggle_scroll_width, cfg.keybinds.items[0].action);
++}
++
++test "animations can be disabled and re-enabled through Lua" {
++    var cfg = Config.init(testing.allocator);
++    defer cfg.deinit();
++    try testing.expect(lua.init(&cfg));
++    defer lua.deinit();
++    try testing.expect(cfg.animations_enabled);
++    try testing.expect(lua.loadFile("resources/test-animations-off.lua"));
++    try testing.expect(!cfg.animations_enabled);
++    try testing.expect(lua.loadFile("resources/test-animations-on.lua"));
++    try testing.expect(cfg.animations_enabled);
++}
+--- a/resources/test-toggle-width.lua
++++ b/resources/test-toggle-width.lua
+@@ -0,0 +1 @@
++oxwm.key.bind({"Mod4"}, "F", oxwm.layout.toggle_width())
+--- a/resources/test-animations-off.lua
++++ b/resources/test-animations-off.lua
+@@ -0,0 +1 @@
++oxwm.set_animations(false)
+--- a/resources/test-animations-on.lua
++++ b/resources/test-animations-on.lua
+@@ -0,0 +1 @@
++oxwm.set_animations(true)

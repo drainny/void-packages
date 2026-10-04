@@ -1,0 +1,12 @@
+--- a/build.zig.zon
++++ b/build.zig.zon
+@@ -5,8 +5,7 @@
+     .minimum_zig_version = "0.16.0",
+     .dependencies = .{
+         .lua = .{
+-            .url = "https://www.lua.org/ftp/lua-5.4.8.tar.gz",
+-            .hash = "N-V-__8AAKEzFAAA695b9LXBhUSVK5MAV_VKSm1mEj3Acbze",
++            .path = "vendor/lua",
+         },
+     },
+     .paths = .{

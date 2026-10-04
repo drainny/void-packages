@@ -1,0 +1,78 @@
+# Template file for 'oxwm-lorentz'
+pkgname=oxwm-lorentz
+version=0.12.0
+revision=2
+_commit=d0bb35b8cde97782c925c102521ebaeec389db95
+_lua_version=5.4.8
+archs="x86_64* aarch64*"
+hostmakedepends="pkg-config zig0.16"
+makedepends="libX11-devel libXinerama-devel libXft-devel fontconfig-devel freetype-devel"
+short_desc="Oxwm with Lorentz's scrolling, focus and touchpad-drag fixes"
+maintainer="Lorentz <lorentz@localhost>"
+license="GPL-3.0-only, MIT"
+homepage="https://github.com/tonybanters/oxwm"
+distfiles="https://codeload.github.com/tonybanters/oxwm/tar.gz/${_commit}>oxwm-${_commit}.tar.gz
+	https://www.lua.org/ftp/lua-${_lua_version}.tar.gz"
+checksum="c61559f4988cc84615306c9c8fbc7b7304c18f7667fce9eb991a112e08b48b00
+	4f18ddae154e793e46eeab727c59ef1c0c0c2b744e7b94219710d76f530629ae"
+skip_extraction="lua-${_lua_version}.tar.gz"
+conflicts="oxwm>=0"
+nocross="Native Zig builds only; cross compilation has not been validated"
+
+post_extract() {
+	mkdir -p vendor/lua
+	tar -xf "${XBPS_SRCDISTDIR}/${pkgname}-${version}/lua-${_lua_version}.tar.gz" \
+		--strip-components=1 -C vendor/lua
+}
+
+do_configure() {
+	# Do not use Void's zig-build style: it injects the incompatible zig 0.13.
+	test "$(zig0.16 version)" = 0.16.0 || msg_error "Zig 0.16.0 is required.\n"
+	printf '%s\n' \
+		"include_dir=/usr/include" "sys_include_dir=/usr/include" \
+		"crt_dir=/usr/lib" "msvc_lib_dir=" "kernel32_lib_dir=" "gcc_dir=" \
+		> xbps_zig_libc.txt
+}
+
+do_build() {
+	# Each XBPS phase runs separately; nested Zig calls also need this setting.
+	export ZIG_GLOBAL_CACHE_DIR="${wrksrc}/.zig-cache-global"
+	zig0.16 build -j"${XBPS_MAKEJOBS}" \
+		--sysroot / --search-prefix /usr --libc xbps_zig_libc.txt \
+		--global-cache-dir "${wrksrc}/.zig-cache-global" \
+		-Dtarget="${XBPS_ZIG_TARGET}" -Dcpu="${XBPS_ZIG_CPU}" \
+		-Doptimize=ReleaseFast
+}
+
+do_check() {
+	export ZIG_GLOBAL_CACHE_DIR="${wrksrc}/.zig-cache-global"
+	zig0.16 build test -j"${XBPS_MAKEJOBS}" \
+		--sysroot / --search-prefix /usr --libc xbps_zig_libc.txt \
+		--global-cache-dir "${wrksrc}/.zig-cache-global" \
+		-Dtarget="${XBPS_ZIG_TARGET}" -Dcpu="${XBPS_ZIG_CPU}"
+}
+
+do_install() {
+	vbin zig-out/bin/oxwm
+	vman resources/oxwm.1
+	vinstall resources/oxwm.desktop 644 usr/share/xsessions
+	vinstall templates/oxwm.lua 644 usr/share/oxwm
+	vlicense LICENSE
+	vlicense vendor/lua/doc/readme.html LUA.html
+}
+
+oxwm-lorentz-session_package() {
+	short_desc="Supporting applications for Lorentz's oxwm session"
+	metapackage=yes
+	depends="oxwm-lorentz>=${version}_${revision}
+		bash coreutils findutils gawk grep procps-ng
+		xorg-server xinit xauth xorg-fonts xrandr xrdb xset xinput xf86-input-synaptics
+		dbus dbus-x11 elogind
+		alacritty fzf slock picom dunst unclutter libnotify
+		gnupg xclip wl-clipboard zathura zathura-pdf-mupdf emacs
+		pipewire wireplumber mpd
+		fcitx5 fcitx5-gtk+3 fcitx5-qt fcitx5-qt6 fcitx5-chinese-addons fcitx5-anthy
+		libinput-gestures xdotool brightnessctl
+		xdg-desktop-portal xdg-desktop-portal-gtk gnome-keyring
+		redshift xwallpaper"
+}
