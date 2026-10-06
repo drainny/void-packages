@@ -1,20 +1,137 @@
 # Template file for 'ueberzugpp'
 pkgname=ueberzugpp
 version=2.9.10
-revision=1
-build_style=cmake
-configure_args="-DFETCHCONTENT_FULLY_DISCONNECTED=ON
- -DENABLE_X11=ON -DENABLE_WAYLAND=ON -DENABLE_OPENCV=ON
- -DENABLE_OPENGL=OFF -DENABLE_DBUS=OFF -DENABLE_TURBOBASE64=OFF"
-hostmakedepends="pkg-config extra-cmake-modules wayland-devel"
-makedepends="cli11 json-c++ fmt-devel spdlog range-v3 openssl-devel
- tbb-devel libvips-devel libsixel-devel chafa-devel libxcb-devel
- xcb-util-image-devel wayland-devel wayland-protocols libopencv-devel"
+revision=3
+archs="x86_64"
+create_wrksrc=yes
 short_desc="Display images in terminals using X11, Wayland and terminal protocols"
 maintainer="drainny <binguitsmerial@pm.me>"
-license="GPL-3.0-or-later"
+license="GPL-3.0-or-later, custom:Bundled-libraries"
 homepage="https://github.com/jstkdng/ueberzugpp"
-distfiles="https://github.com/jstkdng/ueberzugpp/archive/refs/tags/v${version}.tar.gz"
-checksum=225b74ae3c71fd7d6dbd8b3a1740dacda95c40146a4fd00c792e4f18f200854d
+# Upstream binary and matching prebuilt compatibility libraries.
+distfiles="https://download.opensuse.org/repositories/home:/justkidding/Debian_12/amd64/ueberzugpp_${version}_amd64.deb
+ https://deb.debian.org/debian/pool/main/liba/libaec/libaec0_1.0.6-1+b1_amd64.deb
+ https://deb.debian.org/debian/pool/main/a/armadillo/libarmadillo11_11.4.2+dfsg-1_amd64.deb
+ https://deb.debian.org/debian/pool/main/f/ffmpeg/libavcodec59_5.1.9-0+deb12u1_amd64.deb
+ https://deb.debian.org/debian/pool/main/f/ffmpeg/libavformat59_5.1.9-0+deb12u1_amd64.deb
+ https://deb.debian.org/debian/pool/main/f/ffmpeg/libavutil57_5.1.9-0+deb12u1_amd64.deb
+ https://deb.debian.org/debian/pool/main/b/bzip2/libbz2-1.0_1.0.8-5+b1_amd64.deb
+ https://deb.debian.org/debian/pool/main/c/charls/libcharls2_2.4.1-1_amd64.deb
+ https://deb.debian.org/debian/pool/main/c/curl/libcurl3-gnutls_7.88.1-10+deb12u15_amd64.deb
+ https://deb.debian.org/debian/pool/main/d/dav1d/libdav1d6_1.0.0-2+deb12u1_amd64.deb
+ https://deb.debian.org/debian/pool/main/libd/libdc1394/libdc1394-25_2.2.6-4_amd64.deb
+ https://deb.debian.org/debian/pool/main/f/fmtlib/libfmt9_9.1.0+ds1-2_amd64.deb
+ https://deb.debian.org/debian/pool/main/f/fyba/libfyba0_4.1.1-8_amd64.deb
+ https://deb.debian.org/debian/pool/main/g/gdal/libgdal32_3.6.2+dfsg-1+b2_amd64.deb
+ https://deb.debian.org/debian/pool/main/g/gdcm/libgdcm3.0_3.0.21-1_amd64.deb
+ https://deb.debian.org/debian/pool/main/libh/libhdf4/libhdf4-0-alt_4.2.15-5_amd64.deb
+ https://deb.debian.org/debian/pool/main/h/hdf5/libhdf5-103-1_1.10.8+repack1-1_amd64.deb
+ https://deb.debian.org/debian/pool/main/libj/libjpeg-turbo/libjpeg62-turbo_2.1.5-2_amd64.deb
+ https://deb.debian.org/debian/pool/main/j/jpeg-xl/libjxl0.7_0.7.0-10+deb12u1_amd64.deb
+ https://deb.debian.org/debian/pool/main/libk/libkml/libkmlbase1_1.3.0-10_amd64.deb
+ https://deb.debian.org/debian/pool/main/libk/libkml/libkmldom1_1.3.0-10_amd64.deb
+ https://deb.debian.org/debian/pool/main/libk/libkml/libkmlengine1_1.3.0-10_amd64.deb
+ https://deb.debian.org/debian/pool/main/o/openldap/libldap-2.5-0_2.5.13+dfsg-5_amd64.deb
+ https://deb.debian.org/debian/pool/main/i/intel-mediasdk/libmfx1_22.5.4-1_amd64.deb
+ https://deb.debian.org/debian/pool/main/o/ogdi-dfsg/libogdi4.1_4.1.0+ds-6_amd64.deb
+ https://deb.debian.org/debian/pool/main/o/opencv/libopencv-core406_4.6.0+dfsg-12_amd64.deb
+ https://deb.debian.org/debian/pool/main/o/opencv/libopencv-imgcodecs406_4.6.0+dfsg-12_amd64.deb
+ https://deb.debian.org/debian/pool/main/o/opencv/libopencv-imgproc406_4.6.0+dfsg-12_amd64.deb
+ https://deb.debian.org/debian/pool/main/o/opencv/libopencv-videoio406_4.6.0+dfsg-12_amd64.deb
+ https://deb.debian.org/debian/pool/main/o/openexr/libopenexr-3-1-30_3.1.5-5_amd64.deb
+ https://deb.debian.org/debian/pool/main/p/poppler/libpoppler126_22.12.0-2+deb12u2_amd64.deb
+ https://deb.debian.org/debian/pool/main/r/rust-rav1e/librav1e0_0.5.1-6_amd64.deb
+ https://deb.debian.org/debian/pool/main/c/cyrus-sasl2/libsasl2-2_2.1.28+dfsg-10_amd64.deb
+ https://deb.debian.org/debian/pool/main/s/shine/libshine3_3.1.1-2_amd64.deb
+ https://deb.debian.org/debian/pool/main/s/socket++/libsocket++1_1.12.13+git20131030.5d039ba-1+b1_amd64.deb
+ https://deb.debian.org/debian/pool/main/s/spdlog/libspdlog1.10_1.10.0+ds-0.4_amd64.deb
+ https://deb.debian.org/debian/pool/main/s/srt/libsrt1.5-gnutls_1.5.1-1+deb12u1_amd64.deb
+ https://deb.debian.org/debian/pool/main/libs/libssh/libssh-gcrypt-4_0.10.6-0+deb12u2_amd64.deb
+ https://deb.debian.org/debian/pool/main/s/superlu/libsuperlu5_5.3.0+dfsg1-2+b1_amd64.deb
+ https://deb.debian.org/debian/pool/main/s/svt-av1/libsvtav1enc1_1.4.1+dfsg-1_amd64.deb
+ https://deb.debian.org/debian/pool/main/f/ffmpeg/libswscale6_5.1.9-0+deb12u1_amd64.deb
+ https://deb.debian.org/debian/pool/main/liba/libaec/libsz2_1.0.6-1+b1_amd64.deb
+ https://deb.debian.org/debian/pool/main/libv/libvpx/libvpx7_1.12.0-1+deb12u5_amd64.deb
+ https://deb.debian.org/debian/pool/main/x/x264/libx264-164_0.164.3095+gitbaee400-3_amd64.deb
+ https://deb.debian.org/debian/pool/main/x/x265/libx265-199_3.5-2+b1_amd64.deb
+ https://deb.debian.org/debian/pool/main/z/zvbi/libzvbi0_0.2.41-1+deb12u1_amd64.deb
+ https://deb.debian.org/debian/pool/main/p/pristine-tar/pristine-tar_1.50_amd64.deb"
+checksum="f17aa632a5c120ac9a1584546c1ed528c336f76cbd0afe56339fb79cc9a1c3f3
+ 8a403015309664cff739053569062eb99fa92646029191d056a587a3fabd1845
+ 41c40f8f59a90812bf4a3d62cb75b725f50f1950761e24cd5cd1ce2e8cad2748
+ a1c6cfeefe7437ad3ff999d3dad39edb9cfd4d2068a944243fa4f313470b59b1
+ 35216a7786f2bde3c9c00ffa0574ed27c63cb231726aa03ae3664a36946ef01c
+ 3e2c42d9e7235c96cb0329dbe3c13377faaa5aba81ac2d6f3cf54fcd978c9a5f
+ 54149da3f44b22d523b26b692033b84503d822cc5122fed606ea69cc83ca5aeb
+ cab329061fe24c2d223f11d7773f78c3440c91a7ad9c954c1f844caa4c5080b5
+ bf430ecf80f7808704e0187cddc582fd57fc98789ea356d4797651edad387ef3
+ 197f08108242177aeae4c04aac11825c39b7d18598191ab769f910687ccb387f
+ 5476bc64555a11b4fd60a97c1e5cf0516f94ae3de4570ecad2da2379794378c2
+ c3d405b6eabb1a521b60a57509826707f0e6f92b41cdfaae06bf1d7c37da2166
+ 79f3f5058ee5edbcb03cbc5561449399ca7264403f07fe688e451e892979acc9
+ 8f0598b0c16834a37dff627d6bd3d21de64c5e50e61638e3cd59ee29c2b1b30d
+ f307d1aa932c5dcb2d2d541bdf8bb8d227421bacd427f62b128ee5116bd039b2
+ b9b56b6578c88ccc2e31838432813ce1ae22876daffdb2c216058ec44ea056ca
+ 25d7c1c734f054b8f3f94f2d4e12484462b058ebc81ced239d2abe97a301ab23
+ 95ec30140789a342add8f8371ed018924de51b539056522b66f207b25cba9cad
+ 19e747c8b509af924d5d2b1602e9eb68ff60a93576e07e0dfd55ca1f857fdf65
+ fb1561e8c722ab706fae5d44c64d80da5327db576cc67840eb0a10f3ac6e4533
+ 3f18a1599576f962a8164aac4abd6e53c020dc0134722200dfae2848c527f6bf
+ 86855dd154eaa2aa7ad2c7dbd949cc5f80b49c4ba38ce37588f0a4ca465e1407
+ 4b6c30f6554149c594628d945edc6003f0eea8d0cc1341638c0e71375db147ed
+ 19754c2ad5cf13015ebe8e1bd7fbc412ca410d810c036b167ba2b0d9bee36926
+ a00c5312870742d177c2773096cffae579966b4c5a90a2dac0555aa2bbb181a9
+ 69b3db57a5e9aa422808534a70016eda3a37b2b6a7c21630b7a013c67e9ff49f
+ 8936d7cc31510d25fe3b10dcde5ff923cd324d532706452b711c66859c2da39d
+ 3f18632b0dbd87cdee6e6c1be555b1505c41c689832636bad9e7ee9d9c7d54a9
+ b6c04b55c36aba94d8dbb76ac827c0fc7c7738b81565d64451fab35a3a042ae8
+ 99c982879790db75b9de37852a9a91e0751072a27ecd87df8239b291e8e15f01
+ 2d0b5fab03d5e074c3c6e4aeede1235652ddc3a093f51575f319c0ccf693d117
+ c266adb3545b0b8ff6450dbd09f85f19361bf5bc9290ddf2e869f040cb9725b7
+ 11ee190ad39f8d7af441d2c8347388b9449434c73acc67b4b372445ac4152efa
+ 6b09f0d577f515feffc071048218a26cdde5346d6e2661f861009897db0204d2
+ 34d72fa9dd83f9516b9c930ee6e206ec6fa17048b825fa79fa247d74c158aa00
+ b723ebad9456a5186f594db67e9ea0f995f74f514d75e3decfa4c73dd1c98fcd
+ 7a785222cd985b93b675252c0a3510cfcd920f0d531ab674fd4b4878d6646581
+ f2af148e039fed6620c8ba24328a434f9ecb1adb5b735c04d2d41a432ca3553d
+ 01d98cfa0cee738b4d0fd36d3c2af08005b14a2768db56f3b007aca2e2657b13
+ e0f6e357f327e80f26438dcda9c9304c43e2f3343359c6a5075d0b10ddfdb05d
+ 9ed5ebab74fc46bfb72f1e4d4cd7769cc98ac67a3320551958f8a507747df450
+ a8513083422773f2862cff32e43feb4b2133b4aaad6f9633ba31eb34530580a9
+ 7d8fada67fc9e11a08304499fe5beb7f809194d284202b9c9f1a0b8e54b90db4
+ 2b9f0d79ab1dccc10c24963c1debaf5a37d839bdba369ac358deefd1a7d56a12
+ 9cd87d1b0c56f34f51bcbe8bdb55ebb45dd08ce6c0c6ff2dc77378bac3f64cc0
+ b16e63009c643c71136fefa227c77e6d88609a2ac273091b43ce363d1dedf492
+ e5b09131548222d1089047057ef305faeba315004f1cdfe085efe2fbc79fb2d0"
 conflicts="ueberzug>=0"
-make_check=no # Upstream does not provide a test suite
+nostrip=yes
+noshlibprovides=yes
+
+do_install() {
+	local lib doc docpkg
+	vmkdir usr/lib/ueberzugpp/compat
+	vinstall usr/bin/ueberzug 755 usr/lib/ueberzugpp
+	# Keep older SONAMEs private to this program. XBPS still scans all ELFs
+	# and generates dependencies on the remaining Void system libraries.
+	for lib in lib/*.so.* usr/lib/*.so.* \
+	 lib/x86_64-linux-gnu/*.so.* usr/lib/x86_64-linux-gnu/*.so.*; do
+		[ -e "$lib" ] || continue
+		vcopy "$lib" usr/lib/ueberzugpp/compat
+	done
+	vmkdir usr/bin
+	cat >"${DESTDIR}/usr/bin/ueberzug" <<'EOF'
+#!/bin/sh
+export LD_LIBRARY_PATH="/usr/lib/ueberzugpp/compat${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+exec /usr/lib/ueberzugpp/ueberzug "$@"
+EOF
+	chmod 755 "${DESTDIR}/usr/bin/ueberzug"
+	ln -s ueberzug "${DESTDIR}/usr/bin/ueberzugpp"
+	vmkdir usr/share/man
+	vcopy usr/share/man/man1 usr/share/man
+	vdoc usr/share/doc/ueberzugpp/copyright
+	for doc in usr/share/doc/*/copyright; do
+		[ "$doc" != usr/share/doc/ueberzugpp/copyright ] || continue
+		docpkg=${doc%/copyright}
+		vlicense "$doc" "${docpkg##*/}-copyright"
+	done
+}
