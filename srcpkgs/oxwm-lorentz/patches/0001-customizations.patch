@@ -166,42 +166,42 @@
      c.lua_setfield(state, -2, "layout");
  }
  
-@@ -314,6 +317,9 @@
- 
+@@ -315,6 +318,9 @@
      c.lua_pushcfunction(state, luaSetLayout);
      c.lua_setfield(state, -2, "set_layout");
-+
+ 
 +    c.lua_pushcfunction(state, luaSetAnimations);
 +    c.lua_setfield(state, -2, "set_animations");
- 
++
      c.lua_pushcfunction(state, luaSetModkey);
      c.lua_setfield(state, -2, "set_modkey");
-@@ -621,6 +627,12 @@
- fn luaLayoutSet(state: ?*c.lua_State) callconv(.c) c_int {
-     const s = state orelse return 0;
-     createActionTableWithString(s, "ChangeLayout");
-+    return 1;
-+}
-+
-+fn luaLayoutToggleWidth(state: ?*c.lua_State) callconv(.c) c_int {
-+    const s = state orelse return 0;
-+    createActionTable(s, "ToggleScrollWidth");
+ 
+@@ -624,6 +630,12 @@
      return 1;
  }
  
-@@ -1078,6 +1090,12 @@
-     if (dupeLuaString(s, 1)) |term| {
-         cfg.terminal = term;
-     }
-+    return 0;
++fn luaLayoutToggleWidth(state: ?*c.lua_State) callconv(.c) c_int {
++    const s = state orelse return 0;
++    createActionTable(s, "ToggleScrollWidth");
++    return 1;
 +}
 +
-+fn luaSetAnimations(state: ?*c.lua_State) callconv(.c) c_int {
-+    const cfg = config orelse return 0;
-+    cfg.animations_enabled = c.lua_toboolean(state, 1) != 0;
+ fn luaLayoutScrollLeft(state: ?*c.lua_State) callconv(.c) c_int {
+     const s = state orelse return 0;
+     createActionTable(s, "ScrollLeft");
+@@ -1081,6 +1093,12 @@
      return 0;
  }
  
++fn luaSetAnimations(state: ?*c.lua_State) callconv(.c) c_int {
++    const cfg = config orelse return 0;
++    cfg.animations_enabled = c.lua_toboolean(state, 1) != 0;
++    return 0;
++}
++
+ fn luaSetLayout(state: ?*c.lua_State) callconv(.c) c_int {
+     const cfg = config orelse return 0;
+     const s = state orelse return 0;
 @@ -1407,6 +1425,7 @@
          .{ "TagMonitor", Action.send_to_monitor },
          .{ "ScrollLeft", Action.scroll_left },
@@ -210,9 +210,244 @@
      };
  
      inline for (action_map) |entry| {
+--- a/src/layouts/scrolling.zig
++++ b/src/layouts/scrolling.zig
+@@ -40,9 +40,13 @@
+     current = client_mod.nextTiled(monitor.clients);
+     while (current) |client| : (current = client_mod.nextTiled(client.next)) {
+         const window_right = x_pos + window_width;
+-        const screen_left = monitor.win_x;
+-        const screen_right = monitor.win_x + monitor.win_w;
+-        const is_visible = window_right > screen_left and x_pos < screen_right;
++        // X11 does not clip windows to their owning monitor. Even a one-pixel
++        // intersection used to expose the entire next column on its neighbor
++        // and let entering that sliver focus/scroll to the hidden column.
++        // Show only complete columns, including during scrolling transitions.
++        const screen_left = monitor.win_x + gap_outer_v;
++        const screen_right = monitor.win_x + monitor.win_w - gap_outer_v;
++        const is_visible = x_pos >= screen_left and window_right <= screen_right;
+ 
+         if (is_visible) {
+             tiling.resize(
+@@ -83,6 +87,18 @@
+     return window_width + gap_inner_v;
+ }
+ 
++pub fn saveViewport(monitor: *Monitor) void {
++    monitor.pertag.scroll_offsets[monitor.pertag.curtag] = monitor.scroll_offset;
++}
++
++pub fn restoreViewport(monitor: *Monitor) void {
++    monitor.scroll_offset = std.math.clamp(
++        monitor.pertag.scroll_offsets[monitor.pertag.curtag],
++        0,
++        getMaxScroll(monitor),
++    );
++}
++
+ pub fn getMaxScroll(monitor: *Monitor) i32 {
+     var client_count: u32 = 0;
+     var current = client_mod.nextTiled(monitor.clients);
+@@ -108,13 +124,163 @@
+     return null;
+ }
+ 
+-pub fn getTargetScrollForWindow(monitor: *Monitor, target: *Client) i32 {
+-    const index = getWindowIndex(monitor, target) orelse return 0;
+-    if (index == 0) return 0;
++/// The leftmost tiled column in the current viewport, ignoring floating clients.
++pub fn leftmostViewportClient(monitor: *Monitor) ?*Client {
++    const step = getScrollStep(monitor);
++    const offset = std.math.clamp(monitor.scroll_offset, 0, getMaxScroll(monitor));
++    const target_index = if (step > 0) @divTrunc(offset, step) else 0;
++    var index: i32 = 0;
++    var current = client_mod.nextTiled(monitor.clients);
++    while (current) |client| : (current = client_mod.nextTiled(client.next)) {
++        if (index == target_index) return client;
++        index += 1;
++    }
++    return null;
++}
+ 
+-    const scroll_step = getScrollStep(monitor);
++test "floating dismissal chooses viewport left column in full and half width" {
++    var monitor = Monitor{ .win_w = 1920, .nmaster = 2 };
++    var clients: [5]Client = undefined;
++    for (&clients, 0..) |*client, index| {
++        client.* = .{ .tags = 1, .monitor = &monitor };
++        if (index + 1 < clients.len) client.next = &clients[index + 1];
++    }
++    monitor.clients = &clients[0];
++    clients[1].is_floating = true;
++    clients[2].tags = 2;
++    monitor.scroll_offset = getScrollStep(&monitor);
++    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[3]);
++    monitor.nmaster = 1;
++    monitor.scroll_offset = 2 * getScrollStep(&monitor);
++    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[4]);
++    monitor.scroll_offset = 0;
++    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[0]);
++    clients[0].is_floating = true;
++    clients[3].is_floating = true;
++    clients[4].is_floating = true;
++    try std.testing.expect(leftmostViewportClient(&monitor) == null);
++}
++
++pub fn getTargetScrollForWindow(monitor: *Monitor, target: *Client) i32 {
+     const max_scroll = getMaxScroll(monitor);
++    const current = std.math.clamp(monitor.scroll_offset, 0, max_scroll);
++    // Floating windows do not have a column and must not move the viewport.
++    const index = getWindowIndex(monitor, target) orelse return current;
++    const step = getScrollStep(monitor);
++    const visible_count: i32 = @max(1, monitor.nmaster);
++    const column: i32 = @intCast(index);
++    // Keep the current viewport whenever the entire focused column fits.
++    // Otherwise move only far enough to reveal its nearest edge.
++    const minimum = @max(0, (column - visible_count + 1) * step);
++    const maximum = @min(max_scroll, column * step);
++    return std.math.clamp(current, minimum, maximum);
++}
++
++test "focus preserves visible columns and minimally reveals hidden columns" {
++    var monitor = Monitor{ .win_w = 1921, .nmaster = 2, .gap_outer_v = 5, .gap_inner_v = 5 };
++    var clients: [4]Client = undefined;
++    for (&clients, 0..) |*client, index| {
++        client.* = .{ .tags = 1, .monitor = &monitor };
++        if (index + 1 < clients.len) client.next = &clients[index + 1];
++    }
++    monitor.clients = &clients[0];
++    const step = getScrollStep(&monitor);
++    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[1]));
++    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[0]));
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
++    monitor.scroll_offset = step;
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[1]));
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
++    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[0]));
++    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &clients[3]));
++    var floating = Client{ .is_floating = true, .tags = 1, .monitor = &monitor };
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &floating));
++    // A partially visible column is revealed by the smallest adjustment.
++    monitor.scroll_offset = @divTrunc(step, 2);
++    try std.testing.expectEqual(monitor.scroll_offset, getTargetScrollForWindow(&monitor, &clients[1]));
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
++    // Closing windows clamps a stale offset to the remaining content.
++    clients[1].next = null;
++    monitor.scroll_offset = 2 * step;
++    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[1]));
++    // Full-width mode must still reveal the focused window.
++    monitor.nmaster = 1;
++    monitor.scroll_offset = 0;
++    try std.testing.expectEqual(getScrollStep(&monitor), getTargetScrollForWindow(&monitor, &clients[1]));
++}
++
++test "opening a column preserves a scrolled viewport or reveals only the new edge" {
++    var monitor = Monitor{ .win_w = 1920, .nmaster = 2, .gap_outer_v = 5, .gap_inner_v = 5 };
++    var clients: [5]Client = undefined;
++    for (&clients, 0..) |*client, index| {
++        client.* = .{ .tags = 1, .monitor = &monitor };
++        if (index + 1 < clients.len) client.next = &clients[index + 1];
++    }
++    monitor.clients = &clients[0];
++    const step = getScrollStep(&monitor);
++    monitor.scroll_offset = 2 * step;
++    // The third/fourth columns are already visible: never jump to column one.
++    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &clients[3]));
++    // A newly appended fifth column requires exactly one step to the right.
++    try std.testing.expectEqual(3 * step, getTargetScrollForWindow(&monitor, &clients[4]));
++    // Opening a floating terminal must not reposition existing tiled windows.
++    var floating = Client{ .tags = 1, .monitor = &monitor, .is_floating = true };
++    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &floating));
++}
+ 
+-    const target_scroll = scroll_step * @as(i32, @intCast(index));
+-    return @min(target_scroll, max_scroll);
++test "scrolling columns never spill onto an adjacent monitor or expose an edge sliver" {
++    for ([_]i32{ 1920, 1921, 2560 }) |width| {
++        var monitor = Monitor{ .win_x = 320, .win_w = width, .win_h = 1080, .nmaster = 2, .gap_outer_v = 5, .gap_inner_v = 5 };
++        var clients: [4]Client = undefined;
++        for (&clients, 0..) |*client, index| {
++            client.* = .{ .tags = 1, .monitor = &monitor, .border_width = 5 };
++            if (index + 1 < clients.len) client.next = &clients[index + 1];
++        }
++        monitor.clients = &clients[0];
++        const step = getScrollStep(&monitor);
++        for ([_]i32{ 0, step, 2 * step, @divTrunc(step, 2) }) |offset| {
++            monitor.scroll_offset = offset;
++            scroll(&monitor);
++            var visible: usize = 0;
++            for (&clients) |*client| {
++                const right = client.x + client.width + 2 * client.border_width;
++                if (right <= 0) continue; // Completely parked outside the X root.
++                visible += 1;
++                try std.testing.expect(client.x >= monitor.win_x + monitor.gap_outer_v);
++                try std.testing.expect(right <= monitor.win_x + monitor.win_w - monitor.gap_outer_v);
++            }
++            try std.testing.expectEqual(@as(usize, if (offset == @divTrunc(step, 2)) 1 else 2), visible);
++        }
++    }
++}
++
++test "returning to a tag restores its left focused column and clamps removed content" {
++    var monitor = Monitor{ .win_w = 1920, .win_h = 1080, .nmaster = 2, .gap_outer_v = 5, .gap_inner_v = 5 };
++    var clients: [4]Client = undefined;
++    for (&clients, 0..) |*client, index| {
++        client.* = .{ .tags = 1, .monitor = &monitor };
++        if (index + 1 < clients.len) client.next = &clients[index + 1];
++    }
++    monitor.clients = &clients[0];
++    const step = getScrollStep(&monitor);
++    monitor.scroll_offset = step;
++    monitor.sel = &clients[1];
++    saveViewport(&monitor);
++    monitor.pertag.curtag = 2;
++    monitor.tagset[0] = 2;
++    restoreViewport(&monitor);
++    try std.testing.expectEqual(@as(i32, 0), monitor.scroll_offset);
++    saveViewport(&monitor);
++    monitor.pertag.curtag = 1;
++    monitor.tagset[0] = 1;
++    restoreViewport(&monitor);
++    // Focusing the previously selected second window must keep it on the left.
++    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, monitor.sel.?));
++    scroll(&monitor);
++    try std.testing.expectEqual(monitor.win_x + monitor.gap_outer_v, clients[1].x);
++    clients[1].next = null;
++    restoreViewport(&monitor);
++    try std.testing.expectEqual(@as(i32, 0), monitor.scroll_offset);
++    const other_monitor = Monitor{};
++    try std.testing.expectEqual(@as(i32, 0), other_monitor.pertag.scroll_offsets[1]);
+ }
+--- a/src/main.zig
++++ b/src/main.zig
+@@ -189,4 +189,6 @@
+ 
+ test {
+     _ = @import("x11/events.zig");
++    _ = @import("layouts/scrolling.zig");
++    _ = @import("client.zig");
+ }
+--- a/src/monitor.zig
++++ b/src/monitor.zig
+@@ -17,6 +17,7 @@
+     sellts: [13]u32 = [_]u32{0} ** 13,
+     ltidxs: [13][6]?*const Layout = [_][6]?*const Layout{.{ null, null, null, null, null, null }} ** 13,
+     showbars: [13]bool = [_]bool{true} ** 13,
++    scroll_offsets: [13]i32 = [_]i32{0} ** 13,
+ };
+ 
+ pub const Monitor = struct {
 --- a/src/wm/actions.zig
 +++ b/src/wm/actions.zig
-@@ -15,6 +15,18 @@
+@@ -5,6 +5,7 @@
+ const lua = @import("../config/lua.zig");
+ const core = @import("core.zig");
+ const tiling = @import("../layouts/tiling.zig");
++const scrolling = @import("../layouts/scrolling.zig");
+ const monitor_mod = @import("../monitor.zig");
+ const bar_mod = @import("../bar/bar.zig");
+ const wm_mod = @import("wm.zig");
+@@ -15,6 +16,18 @@
  const WindowManager = wm_mod.WindowManager;
  
  const snap_distance: i32 = 32;
@@ -231,7 +466,7 @@
  
  // execvpeZ removed in zig 0.16 std lib rework (codeberg.org/ziglang/zig/issues/31694) with no replacement
  extern "c" fn execvp(file: [*:0]const u8, argv: [*:null]const ?[*:0]const u8) c_int;
-@@ -80,51 +92,7 @@
+@@ -80,51 +93,7 @@
          return;
      }
  
@@ -284,12 +519,30 @@
  
      if (target) |swap_client| {
          if (swap_client != current) {
-@@ -295,52 +263,8 @@
+@@ -139,6 +108,8 @@
+     const monitor = wm.selected_monitor orelse return;
+     const new_tags = monitor.tagset[monitor.sel_tags] ^ tag_mask;
+     if (new_tags != 0) {
++        scrolling.saveViewport(monitor);
++        wm.scroll_animation.active = false;
+         monitor.tagset[monitor.sel_tags] = new_tags;
+ 
+         if (new_tags == ~@as(u32, 0)) {
+@@ -159,6 +130,8 @@
+         monitor.mfact = monitor.pertag.mfacts[monitor.pertag.curtag];
+         monitor.sel_lt = monitor.pertag.sellts[monitor.pertag.curtag];
+ 
++        scrolling.restoreViewport(monitor);
++
+         const new_show_bar = monitor.pertag.showbars[monitor.pertag.curtag];
+         if (new_show_bar != monitor.show_bar) {
+             monitor.show_bar = new_show_bar;
+@@ -295,52 +268,8 @@
  }
  
  pub fn focusstack(direction: i32, wm: *WindowManager) void {
 -    if (direction == 0) return;
--    const monitor = wm.selected_monitor orelse return;
+     const monitor = wm.selected_monitor orelse return;
 -    const current = monitor.sel orelse return;
 -
 -    var next_client: ?*Client = null;
@@ -334,12 +587,11 @@
 -        }
 -        next_client = prev;
 -    }
-+    const monitor = wm.selected_monitor orelse return;
 +    const next_client = client_mod.adjacentVisible(monitor, direction);
  
      if (next_client) |client| {
          core.focus(client, wm);
-@@ -519,9 +443,6 @@
+@@ -519,9 +448,6 @@
      core.restack(monitor, wm);
  
      const was_floating = client.is_floating;
@@ -349,7 +601,7 @@
  
      var root_x: c_int = undefined;
      var root_y: c_int = undefined;
-@@ -555,6 +476,7 @@
+@@ -555,6 +481,7 @@
  
      var event: xlib.XEvent = undefined;
      var done = false;
@@ -357,7 +609,7 @@
  
      while (!done) {
          _ = xlib.XNextEvent(wm.display.handle, &event);
-@@ -568,6 +490,11 @@
+@@ -568,6 +495,11 @@
                  last_time = motion.time;
                  const delta_x = motion.x_root - pointer_start_x;
                  const delta_y = motion.y_root - pointer_start_y;
@@ -369,17 +621,17 @@
                  var new_x = start_x + delta_x;
                  var new_y = start_y + delta_y;
                  if (client.monitor) |client_monitor| {
-@@ -584,6 +511,9 @@
-     }
+@@ -585,6 +517,9 @@
  
      _ = xlib.XUngrabPointer(wm.display.handle, xlib.CurrentTime);
-+
+ 
 +    // A modifier-assisted touchpad tap is not a drag; leave tiling intact.
 +    if (!dragged) return;
- 
++
      const new_mon = monitor_mod.rectToMonitor(wm, client.x, client.y, client.width, client.height);
      if (new_mon != null and new_mon != monitor) {
-@@ -854,6 +784,14 @@
+         client_mod.detach(client);
+@@ -854,6 +789,14 @@
          },
          .focus_monitor => focusmon(int_arg, wm),
          .send_to_monitor => sendmon(int_arg, wm),
@@ -508,11 +760,10 @@
      if (!isScrollingLayout(monitor)) return;
  
      const target = scrolling.getTargetScrollForWindow(monitor, client);
--
--    if (animate) {
 +    // Already visible: avoid another show/hide, resize and restack pass.
 +    if (target == monitor.scroll_offset and !wm.scroll_animation.isActive()) return;
-+
+ 
+-    if (animate) {
 +    if (animate and wm.config.animations_enabled) {
          wm.scroll_animation.start(wm.io, monitor.scroll_offset, target, wm.animation_config);
      } else {
@@ -520,146 +771,50 @@
          monitor.scroll_offset = target;
          arrange(monitor, wm);
      }
---- a/src/layouts/scrolling.zig
-+++ b/src/layouts/scrolling.zig
-@@ -108,13 +108,106 @@
-     return null;
- }
+@@ -736,6 +751,8 @@
+     if (tag_mask == monitor.tagset[monitor.sel_tags]) {
+         return;
+     }
++    scrolling.saveViewport(monitor);
++    wm.scroll_animation.active = false;
+     monitor.sel_tags ^= 1;
+     if (tag_mask != 0) {
+         monitor.tagset[monitor.sel_tags] = tag_mask;
+@@ -760,6 +777,8 @@
+     monitor.mfact = monitor.pertag.mfacts[monitor.pertag.curtag];
+     monitor.sel_lt = monitor.pertag.sellts[monitor.pertag.curtag];
  
-+/// The leftmost tiled column in the current viewport, ignoring floating clients.
-+pub fn leftmostViewportClient(monitor: *Monitor) ?*Client {
-+    const step = getScrollStep(monitor);
-+    const offset = std.math.clamp(monitor.scroll_offset, 0, getMaxScroll(monitor));
-+    const target_index = if (step > 0) @divTrunc(offset, step) else 0;
-+    var index: i32 = 0;
-+    var current = client_mod.nextTiled(monitor.clients);
-+    while (current) |client| : (current = client_mod.nextTiled(client.next)) {
-+        if (index == target_index) return client;
-+        index += 1;
-+    }
-+    return null;
-+}
++    scrolling.restoreViewport(monitor);
 +
-+test "floating dismissal chooses viewport left column in full and half width" {
-+    var monitor = Monitor{ .win_w = 1920, .nmaster = 2 };
-+    var clients: [5]Client = undefined;
-+    for (&clients, 0..) |*client, index| {
-+        client.* = .{ .tags = 1, .monitor = &monitor };
-+        if (index + 1 < clients.len) client.next = &clients[index + 1];
-+    }
-+    monitor.clients = &clients[0];
-+    clients[1].is_floating = true;
-+    clients[2].tags = 2;
-+    monitor.scroll_offset = getScrollStep(&monitor);
-+    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[3]);
-+    monitor.nmaster = 1;
-+    monitor.scroll_offset = 2 * getScrollStep(&monitor);
-+    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[4]);
-+    monitor.scroll_offset = 0;
-+    try std.testing.expect(leftmostViewportClient(&monitor) == &clients[0]);
-+    clients[0].is_floating = true;
-+    clients[3].is_floating = true;
-+    clients[4].is_floating = true;
-+    try std.testing.expect(leftmostViewportClient(&monitor) == null);
-+}
-+
- pub fn getTargetScrollForWindow(monitor: *Monitor, target: *Client) i32 {
--    const index = getWindowIndex(monitor, target) orelse return 0;
--    if (index == 0) return 0;
--
--    const scroll_step = getScrollStep(monitor);
-     const max_scroll = getMaxScroll(monitor);
--
--    const target_scroll = scroll_step * @as(i32, @intCast(index));
--    return @min(target_scroll, max_scroll);
--}
-+    const current = std.math.clamp(monitor.scroll_offset, 0, max_scroll);
-+    // Floating windows do not have a column and must not move the viewport.
-+    const index = getWindowIndex(monitor, target) orelse return current;
-+    const step = getScrollStep(monitor);
-+    const visible_count: i32 = @max(1, monitor.nmaster);
-+    const column: i32 = @intCast(index);
-+    // Keep the current viewport whenever the entire focused column fits.
-+    // Otherwise move only far enough to reveal its nearest edge.
-+    const minimum = @max(0, (column - visible_count + 1) * step);
-+    const maximum = @min(max_scroll, column * step);
-+    return std.math.clamp(current, minimum, maximum);
-+}
-+
-+test "focus preserves visible columns and minimally reveals hidden columns" {
-+    var monitor = Monitor{ .win_w = 1921, .nmaster = 2, .gap_outer_v = 5, .gap_inner_v = 5 };
-+    var clients: [4]Client = undefined;
-+    for (&clients, 0..) |*client, index| {
-+        client.* = .{ .tags = 1, .monitor = &monitor };
-+        if (index + 1 < clients.len) client.next = &clients[index + 1];
-+    }
-+    monitor.clients = &clients[0];
-+    const step = getScrollStep(&monitor);
-+    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[1]));
-+    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[0]));
-+    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
-+    monitor.scroll_offset = step;
-+    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[1]));
-+    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
-+    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[0]));
-+    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &clients[3]));
-+    var floating = Client{ .is_floating = true, .tags = 1, .monitor = &monitor };
-+    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &floating));
-+    // A partially visible column is revealed by the smallest adjustment.
-+    monitor.scroll_offset = @divTrunc(step, 2);
-+    try std.testing.expectEqual(monitor.scroll_offset, getTargetScrollForWindow(&monitor, &clients[1]));
-+    try std.testing.expectEqual(step, getTargetScrollForWindow(&monitor, &clients[2]));
-+    // Closing windows clamps a stale offset to the remaining content.
-+    clients[1].next = null;
-+    monitor.scroll_offset = 2 * step;
-+    try std.testing.expectEqual(@as(i32, 0), getTargetScrollForWindow(&monitor, &clients[1]));
-+    // Full-width mode must still reveal the focused window.
-+    monitor.nmaster = 1;
-+    monitor.scroll_offset = 0;
-+    try std.testing.expectEqual(getScrollStep(&monitor), getTargetScrollForWindow(&monitor, &clients[1]));
-+}
-+
-+test "opening a column preserves a scrolled viewport or reveals only the new edge" {
-+    var monitor = Monitor{ .win_w = 1920, .nmaster = 2, .gap_outer_v = 5, .gap_inner_v = 5 };
-+    var clients: [5]Client = undefined;
-+    for (&clients, 0..) |*client, index| {
-+        client.* = .{ .tags = 1, .monitor = &monitor };
-+        if (index + 1 < clients.len) client.next = &clients[index + 1];
-+    }
-+    monitor.clients = &clients[0];
-+    const step = getScrollStep(&monitor);
-+    monitor.scroll_offset = 2 * step;
-+    // The third/fourth columns are already visible: never jump to column one.
-+    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &clients[3]));
-+    // A newly appended fifth column requires exactly one step to the right.
-+    try std.testing.expectEqual(3 * step, getTargetScrollForWindow(&monitor, &clients[4]));
-+    // Opening a floating terminal must not reposition existing tiled windows.
-+    var floating = Client{ .tags = 1, .monitor = &monitor, .is_floating = true };
-+    try std.testing.expectEqual(2 * step, getTargetScrollForWindow(&monitor, &floating));
-+}
---- a/src/main.zig
-+++ b/src/main.zig
-@@ -189,4 +189,6 @@
+     const new_show_bar = monitor.pertag.showbars[monitor.pertag.curtag];
+     if (new_show_bar != monitor.show_bar) {
+         monitor.show_bar = new_show_bar;
+--- a/src/wm/handlers.zig
++++ b/src/wm/handlers.zig
+@@ -5,6 +5,7 @@
+ const client_mod = @import("../client.zig");
+ const core = @import("core.zig");
+ const tiling = @import("../layouts/tiling.zig");
++const scrolling = @import("../layouts/scrolling.zig");
+ const monitor_mod = @import("../monitor.zig");
+ const wm_mod = @import("wm.zig");
+ const events = @import("../x11/events.zig");
+@@ -359,6 +360,15 @@
  
- test {
-     _ = @import("x11/events.zig");
-+    _ = @import("layouts/scrolling.zig");
-+    _ = @import("client.zig");
- }
---- a/templates/oxwm.lua
-+++ b/templates/oxwm.lua
-@@ -368,3 +368,11 @@
- ---Add an autostart command
- ---@param cmd string Command to run at startup
- function oxwm.autostart(cmd) end
-+
-+---Toggle scrolling between one full-width and two half-width columns.
-+---@return table Action
-+function oxwm.layout.toggle_width() end
-+
-+---Enable or disable scrolling animations.
-+---@param enabled boolean
-+function oxwm.set_animations(enabled) end
+     const client = client_mod.windowToClient(wm.monitors, event.window);
+     const target_mon = if (client) |c| c.monitor else monitor_mod.windowToMonitor(wm, event.window);
++    if (client) |c| {
++        if (!client_mod.isVisible(c)) return;
++        if (target_mon) |monitor| {
++            // Pointer focus may select an already visible column, but must
++            // never reveal an off-viewport column (including queued enters).
++            if (!c.is_floating and core.isScrollingLayout(monitor) and
++                scrolling.getTargetScrollForWindow(monitor, c) != monitor.scroll_offset) return;
++        }
++    }
+     const selmon = wm.selected_monitor;
+ 
+     if (target_mon != selmon) {
 --- a/tests/lua_config_tests.zig
 +++ b/tests/lua_config_tests.zig
 @@ -16,3 +16,26 @@
@@ -689,10 +844,20 @@
 +    try testing.expect(lua.loadFile("resources/test-animations-on.lua"));
 +    try testing.expect(cfg.animations_enabled);
 +}
---- a/resources/test-toggle-width.lua
-+++ b/resources/test-toggle-width.lua
-@@ -0,0 +1 @@
-+oxwm.key.bind({"Mod4"}, "F", oxwm.layout.toggle_width())
+--- a/templates/oxwm.lua
++++ b/templates/oxwm.lua
+@@ -368,3 +368,11 @@
+ ---Add an autostart command
+ ---@param cmd string Command to run at startup
+ function oxwm.autostart(cmd) end
++
++---Toggle scrolling between one full-width and two half-width columns.
++---@return table Action
++function oxwm.layout.toggle_width() end
++
++---Enable or disable scrolling animations.
++---@param enabled boolean
++function oxwm.set_animations(enabled) end
 --- a/resources/test-animations-off.lua
 +++ b/resources/test-animations-off.lua
 @@ -0,0 +1 @@
@@ -701,3 +866,7 @@
 +++ b/resources/test-animations-on.lua
 @@ -0,0 +1 @@
 +oxwm.set_animations(true)
+--- a/resources/test-toggle-width.lua
++++ b/resources/test-toggle-width.lua
+@@ -0,0 +1 @@
++oxwm.key.bind({"Mod4"}, "F", oxwm.layout.toggle_width())
