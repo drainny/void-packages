@@ -1,7 +1,7 @@
 # Template file for 'oxwm-lorentz'
 pkgname=oxwm-lorentz
 version=0.12.0
-revision=5
+revision=6
 _commit=d0bb35b8cde97782c925c102521ebaeec389db95
 _lua_version=5.4.8
 archs="x86_64* aarch64*"
